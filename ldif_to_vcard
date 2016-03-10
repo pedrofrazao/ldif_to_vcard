@@ -1,0 +1,144 @@
+#!/usr/bin/perl
+##
+#
+# Script to convert LDIF address book files (ala Netscape) to VCARD
+# format files for use with GnomeCard or other address books using the
+# VCARD format.
+#
+# Copyright 2001-2002 D. Scott Barninger <barninger@fairfieldcomputers.com>
+# This program is licensed under the GNU General Public License version 2.0.
+# See the attached GNU-LICENSE file or visit http://gnu.org
+#
+# Prerequisites:
+# This requires the following perl modules to be installed:
+# perl-ldap >= 0.23 by Graham Barr http://perl-ldap.sourceforge.net
+# Convert-ANSI >= 0.10 by Grahan Barr http://search.cpan.org/search?module=Convert::ANSI
+#
+# Usage ldif_to_vcard /path/to/input-file /path/to/output-file [-cr]
+##
+
+$VERSION = "0.2.1";
+use Net::LDAP::LDIF;
+use MIME::Base64;
+
+# declarations
+my($ldif,$entry,$first_name,$last_name,$email,$sysdate,$systime,$input_file,
+		@input_file_exists,$output_file,@output_file_exists,$strip_cr,$modified_file,
+		$line,$homephone,$workphone,$cellphone);
+
+print "\nThis program will read an LDIF file exported from Netscape Address Book\n";
+print "and create a VCARD format file for use by programs such as GnomeCard.\n";
+print "Copyright 2001 D. Scott Barninger, licensed under the GNU GPL.\n\n";
+print "Usage: ldif_to_vcard /path/to/input-file /path/to/output-file [-cr]\n";
+print "The optional -cr switch will strip DOS type line endings (CR/LF).\n";
+print "If output-file already exists the information will be appended,\n";
+print "otherwise the file will be created.\n\n";
+print "Press any key to continue or Cntl-C to abort...\n\n";
+$junk = <STDIN>;
+
+#check to see how we were called
+$input_file = $ARGV[0];
+$output_file = $ARGV[1];
+$strip_cr = $ARGV[2];
+if(!$input_file || !$output_file) {
+	print "Please specify an input LDIF file and an output VCARD file\n";
+	exit;
+}
+
+# check to see if the input file specified exists
+@input_file_exists = stat($input_file);
+if(!@input_file_exists) {
+	print "Sorry but $input_file does not exist.\n";
+	exit;
+}
+
+# check to see if we should convert DOS to unix line endings
+if($strip_cr eq "-cr") {
+	$modified_file = $input_file . ".unix";
+	open(INFILE, "$input_file");
+	open(MODFILE, ">$modified_file");
+	while($line = <INFILE>) {
+		$line =~ s/\r//g;
+		$line =~ s/\cZ//g;
+		print MODFILE ($line);
+	}
+	close(INFILE);
+	close(MODFILE);
+}
+
+# check to see if the output file specified already exists
+@output_file_exists = stat($output_file);
+
+# open a file handle for the output file
+if(!@output_file_exists) {
+	open(OUTFILE, ">$output_file"); # open for overwrite
+}
+else {
+	open(OUTFILE, ">>$output_file"); # open for append
+}
+
+# now read the input file and make the conversion
+if($strip_cr eq "-cr") {
+	$ldif = Net::LDAP::LDIF->new($modified_file,"r");
+}
+else {
+	$ldif = Net::LDAP::LDIF->new($input_file,"r");
+}
+
+while($entry = $ldif->read()) {
+  $name = $entry->get_value('displayName');
+	$email = $entry->get_value('mail');
+	$homephone = $entry->get_value('homephone');
+	$workphone = $entry->get_value('xmozillaanyphone');
+	$cellphone = $entry->get_value('mobile');
+        $photo = $entry->get_value('thumbnailPhoto');
+        $office = $entry->get_value('physicalDeliveryOfficeName');
+        $title = $entry->get_value('title');
+	($sysdate,$systime) = &sys_date;
+  if($name) {	# test to see if we have a person or list entry
+                print "Adding $name to VCARD...\n";
+		print OUTFILE "BEGIN:VCARD\n";
+		print OUTFILE "FN:$name\n";
+		print OUTFILE "N:$name\n";
+		print OUTFILE "BDAY:\n";
+		print OUTFILE "REV:$sysdate" . "T$systime\n";
+		print OUTFILE "EMAIL;INTERNET:$email\n";
+		if($workphone){
+			print OUTFILE "TEL;WORK:$workphone\n";
+		}
+		if($homephone){
+			print OUTFILE "TEL;HOME:$homephone\n";
+		}
+		if($cellphone){
+			print OUTFILE "TEL;CELL;PREF:$cellphone\n";
+		}
+                print OUTFILE "TITLE:$title\n";
+                print OUTFILE "PHOTO;ENCODING=BASE64;JPEG:"
+                              . encode_base64($photo)
+                              ."\n";
+		print OUTFILE "END:VCARD\n\n";
+	}
+}
+
+$ldif->done();
+close(OUTFILE);
+exit;
+
+sub sys_date {
+	# get the system date
+	# usage:  my($sysdate,$systime) = &sys_date;
+
+	my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
+	if (length ($min) == 1) {$min = '0'.$min;}
+	if (length ($sec) == 1) {$sec = '0'.$sec;}
+	# since localtime returns the month as 0-11
+	$mon = $mon + 1;
+	if (length ($mon) == 1) {$mon = '0'.$mon;}
+	if (length ($mday) == 1) {$mday = '0'.$mday;}
+	# since localtime returns the year as the number of years since 1900
+	# ie year is 100 in the year 2000 (so is y2k OK)
+	$year = $year + 1900;
+	my $date = "$year-$mon-$mday";
+	my $time = "$hour:$min:$sec";
+	return($date,$time);
+}
